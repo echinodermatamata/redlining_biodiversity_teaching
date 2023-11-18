@@ -1,0 +1,5 @@
+"0",""
+"0","# Counts how many 'x's per checklist"
+"0","X_missing <- data2018 %>%"
+"0","  group_by(SAMPLING.EVENT.IDENTIFIER) %>%"
+"0","  summarise(number_X = sum(OBSERVATION.COUNT==""X""))"

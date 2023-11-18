@@ -1,0 +1,2 @@
+"0","p2 <- ggplot(red, aes(Grade, shannon))"
+"0","p2 + geom_boxplot()"

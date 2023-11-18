@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-output: html_document
+title: 'Part 2: Ecological Effects of Redlining'
+output:
+  html_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -16,7 +18,32 @@ When you click the **Knit** button a document will be generated that includes bo
 
 ## Installing packages
 
+```{r}
+#install.packages("auk")
+#install.packages("sf")
+#install.packages("gridExtra")
+#install.packages("lubridate")
+#install.packages("tidyverse")
+#install.packages("descr")
+#install.packages("Hmisc")
+#install.packages("vegan")
+#install.packages("dplyr")
+#install.packages("colorspace")
+```
+
+
 ## Loading Libraries
+```{r}
+library(auk)
+library(lubridate)
+library(sf)
+library(gridExtra)
+library(tidyverse)
+library(descr)
+library(Hmisc)
+library(vegan)
+library(dplyr)
+```
 
 
 ## Our research question  
@@ -37,7 +64,7 @@ We are going to import data from Fulton county the was collected in 2018 and is 
 
 There is A LOT of data here, so for today we are just going to focus on one county and one year. 
 
-We are going to call the data "data2018" and we are going to download the file from Canvas. Download it into the same folder as your project so that you can open it using the line of code below. 
+We are going to call the data "data2018" and we are going to download the file from Canvas. Download it into the same folder as your project so that you can open it using the line of code below. Also while you're in canvas download the red_ATL_bird_corrected.xlsx document and put it into your project folder.
 
 ```{r}
 data2018<- read.delim("ebd_US-GA-121_201801_201812_relMar-2021.txt")
@@ -90,6 +117,8 @@ accounts for the instance in which people submit the same species both at the sp
 
 It puts it all together into a new dataframe called the "data2018_clean" dataframe.
 
+WARNING: You're going to get a warning that NAs were introduced by coercion, it's OK-- we'll deal with those NAs later.
+
 ```{r}
 data2018_clean <- data2018 %>%
   filter(CATEGORY %in% c("species","issf")) %>%
@@ -105,5 +134,339 @@ So now we're going to use pipes again. You remember pipes %>% which let us pass 
 
 We're going to use those again to do a bit more filtering.
 
+We're going to take the "data2018_clean" dataframe and pass it between several more filtering steps. The major thing we're trying to filter out are any instances where there was only 1 bird observation recorded for the whole session. These single sightings aren't very useful to us because they're really not a representative sampling of the birds in a location. We want true sampling events ONLY. 
 
+It will then make a new dataframe with the filtered data and call it "analysis_data".
+
+```{r}
+# apply some filtering criteria and join into one big file named "analysis_data"
+analysis_data <- data2018_clean %>%
+  ## filter for only complete checklists
+  filter(ALL.SPECIES.REPORTED == 1)  %>%
+  ## only using stationary, traveling, and exhaustive area type checklists
+  filter(PROTOCOL.TYPE %in% c("Area", "Stationary", "Traveling")) %>%
+  ## Get rid of any checklists that had a single X
+  filter(number_X==0) %>%
+  group_by(SAMPLING.EVENT.IDENTIFIER) %>%
+  summarise(Species_Richness=length(unique(COMMON.NAME)),
+            Species_Diversity=diversity(OBSERVATION.COUNT),
+            Species_Abundance=sum(OBSERVATION.COUNT, na.rm=TRUE),
+            Minutes=mean(DURATION.MINUTES, na.rm=TRUE),
+            Distance_km=mean(EFFORT.DISTANCE.KM, na.rm=TRUE),
+            Area_ha=mean(EFFORT.AREA.HA, na.rm=TRUE)) %>%
+  inner_join(data2018_clean, ., by="SAMPLING.EVENT.IDENTIFIER")
+
+
+```
+
+
+## Filtering out group_identifier data to eliminate 'duplicated' checklists ##
+
+Again, just cleaning up the data, but using pipes %>%. 
+
+```{r}
+# first select the group_identifiers and associated checklists
+duplicated <- analysis_data %>%
+  drop_na(GROUP.IDENTIFIER) %>%
+  select(GROUP.IDENTIFIER, SAMPLING.EVENT.IDENTIFIER) %>%
+  distinct(.keep_all=TRUE) %>%
+  group_by(GROUP.IDENTIFIER) %>%
+  # randomly sample one checklist for each group_identifier
+  sample_n(., 1) %>%
+  .$SAMPLING.EVENT.IDENTIFIER
+
+duplicated_data <- analysis_data %>%
+  filter(SAMPLING.EVENT.IDENTIFIER %in% duplicated)
+```
+
+Now we're going to pretty up our data and make it complete by using bind to add a few rows to the end of our data-- namely we're going to put "GROUP.IDENTIFIER" in there as a variable and add it to our duplicated data using "bind_rows" to make a new dataframe called "analysis data"
+
+```{r}
+## now, append the selected checklists for each group_identifier
+## with the non group_identifier checklists from the data
+analysis_data <- analysis_data %>%
+  filter(!grepl("G", GROUP.IDENTIFIER)) %>%
+  bind_rows(., duplicated_data)
+```
+
+Also, we're going to add distance and duration caps just to be sure that we're really getting good quality sampling data ONLY.
+
+Then we're going to rename our dataframe "analysis_data.all".
+
+
+```{r}
+#########################################################
+############ apply distance and duration caps ###########
+#########################################################
+analysis_data <- analysis_data %>%
+  filter(DURATION.MINUTES >= 5 & DURATION.MINUTES <=240) %>%
+  filter(EFFORT.DISTANCE.KM <= 10)
+
+
+## rename analysis_data to signify it is the 'complete' checklist usage
+analysis_data.all <- analysis_data
+```
+
+##Almost There....###
+
+Finally, we're going to get rid of any birds that really aren't supposed to be there. Again this is citizen science data. These aren't experts, but everyday folks. So, we have to be careful about data quality. 
+
+We're going to do this by getting rid of the outliers- birds that are only seen in one or two lists, but are really rare- and probably wrong. 
+
+
+```{r}
+######################################################################
+#### get rid of species which did not occur on >95% of checklists ####
+######################################################################
+
+## Exclude the species that rarely occur-- to eliminate any potential errors in citizen science identification
+checklists_hotspots <- analysis_data.all%>%
+  group_by(LOCALITY.ID)%>%
+  summarise(total_checklists=length(unique(SAMPLING.EVENT.IDENTIFIER)))
+
+## create a dataframe which removes the species that are on <=5% of checklists in a hotspot
+analysis_data.95 <- analysis_data.all%>%
+  group_by(LOCALITY.ID, COMMON.NAME)%>%
+  summarise(species_count=length(COMMON.NAME))%>%
+  inner_join(checklists_hotspots, ., by="LOCALITY.ID")%>%
+  mutate(percentage_of_checklists=(species_count/total_checklists)*100)%>%
+  inner_join(analysis_data.all, ., by=c("LOCALITY.ID", "COMMON.NAME"))%>%
+  filter(percentage_of_checklists >=5.00) ## removing species that are on < 5% of checklists in a hotspot
+
+
+
+```
+
+## Calculating Bird Biodiversity##
+
+So, now we've got a pretty data file. In that file each row is a single bird species observation at a particular place and a particular time. 
+
+So if I went out today and saw 14 bluebirds and 3 robins and 1 hawk. Each of those bird species (bluebird, robin, and hawk) would be a single row and the number of birds observed would be recorded in one of the data columns for that observed species. 
+
+However, when we calculate the biodiversity, we want to know how many birds of each species was observed at each observation time. We need the data to be structured differently. Essentially we want each row to be a observation time and the columns to be the bird species and the data in each cell to be the number of birds of each species observed at each observation time. 
+
+In R this is called making long data into wide data. Luckily, this is pretty easy to do in R and that's what we're going to do now. 
+
+
+```{r}
+# Create a matrix bird species  using the piping function (%>%)
+
+colnames(analysis_data.all)
+brd_matrix<- analysis_data.all %>% group_by(SAMPLING.EVENT.IDENTIFIER, COMMON.NAME) %>%
+  summarise(count=n()) %>%
+  spread(COMMON.NAME,count)
+
+# Convert NAs to 0
+brd_matrix[is.na(brd_matrix)] <- 0
+
+# Look at it - does it look ok?
+brd_matrix
+```
+
+We're now going to use the SAMPLING.EVENT.IDENTIFIER variable to calculate 2 measurements of biodiversity. The species richness (which is the number of species identified) and the shannon's biodiversity index which includes not only the number of species identified, but also the number of each species, so it gives us an idea of evenness of species (is a sample really just ALL robins or is it diverse).
+
+Now that we've gone through all the work of cleaning up the data and getting it into the right format, this is really easy and can be done using the vegan package you installed earlier. 
+
+```{r}
+# Now we are ready to calculate some diversity indices by SAMPLING.EVENT.IDENTIFIER
+# http://cc.oulu.fi/~jarioksa/softhelp/vegan/html/diversity.html
+
+### Going to save the SAMPLING.EVENT.IDENTIFIER in a separate dataframe so I can add it back in and join everything back together
+subSEI <- subset (brd_matrix, select = "SAMPLING.EVENT.IDENTIFIER")
+
+### Need to get rid of the non-numeric SAMPLING.EVENT.IDENTIFIER
+brd_matrix <- brd_matrix[,-1]
+
+
+### Species richness
+rich <- specnumber(brd_matrix, MARGIN = 1)
+
+
+#### Shannon's Biodiversity Index
+shannondiv <- diversity(brd_matrix, MARGIN = 1)
+
+```
+
+ OK that was easy right?
+ 
+ Now we have to add that all back and make a nice dataframe so that we can view it and understand it.
+ 
+
+
+
+```{r}
+##Need to take richness list and make it a dataframe
+rich_df <- enframe(rich, name = NULL, value= "value")
+###Rename value to "richness"
+rich_df <- rich_df %>% rename (sp_richness = value)
+
+
+###Now I'm going to add back in the SAMPLING.EVENT.IDENTIFIER information back to the species number
+
+rich_df <- cbind (rich_df,subSEI)
+
+##Now put the richness back with all the rest of the data and get rid of any extra rows that may produce
+analysis_data.all<- right_join(rich_df, analysis_data.all)
+analysis_data.all<- unique(analysis_data.all) ### Though there should not be any extra rows or duplications at this point so this is probably completely redundant
+
+#### Now do the same thing for Shannon's
+##Need to take richness list and make it a dataframe
+shan_df <- enframe(shannondiv, name = NULL, value= "value")
+###Rename value to "richness"
+shan_df <- shan_df %>% rename (shannon = value)
+
+
+###Now I'm going to add back in the SAMPLING.EVENT.IDENTIFIER information back to the species number
+
+shan_df <- cbind (shan_df,subSEI)
+
+##Now put the richness back with all the rest of the data and get rid of any extra rows that may produce
+analysis_data.all<- right_join(shan_df, analysis_data.all)
+analysis_data.all<- unique(analysis_data.all) ### Though there should not be any extra rows or duplications at this point so this is probably completely redundant
+```
+
+
+
+###Bird Biodiversity Calculated!!!###
+
+Wonderful, you did it! You've calculated the bird biodiversity for a whole bunch of bird observations. Now to figure out if there's a difference between the different grades. 
+For that we're going to go back to ArcGIS, but first we're going to need a .csv file of  the latitude and longitude coordinates for each  locality.ID. And again, R can do this for us super quick. And export it as a .csv file
+
+```{r}
+###ArcGIS part
+###Make just coordinates and LOCALITY.ID
+
+arc <-subset (analysis_data.all, select = c("LOCALITY.ID", "LATITUDE", "LONGITUDE"))
+arc <- unique(arc)
+
+write.csv(arc, "arc.csv", row.names=F)
+######
+```
+
+
+##################
+
+Now we have to go back to ArcGIS online. And let's add the location IDs to our map. 
+
+So once you login and open up the Hoffman map we used last week, we're going to add our .csv location data in and look at our map. So, to do that:1) go to the "Open Map in Classic View" Tab in the upper right. Once that transfers click on the "Add" button on the left. Select "Add Layer" from file and select the arc.csv. Once you import, you should see all of the sampling data on the map.  
+
+Unfortunately, we can't directly download the grade and location ID data from ArcGIS (the free version). But, lucky for you I did it already. So, after you take a look at the map, come back and let's finish up the analysis. 
+
+
+
+## Bringing it back to do the final analysis##
+
+So let's bring in the grade data with the bird observation data. We're going to read in a new excel sheet that is an export from ArcGIS that has ALL the data in it. 
+
+```{r}
+library(readxl)
+red_ATL_bird_corrected <- read_excel("red_ATL_bird_corrected.xlsx")
+
+
+
+colnames(red_ATL_bird_corrected)
+
+###we're going to subset the data and add the grade part back in using right_join 
+
+subred <- subset (red_ATL_bird_corrected, select = c("LOCALITY.ID", "Grade"))
+
+
+red<- right_join(analysis_data.all, subred)
+red <- unique(red)
+
+colnames(red)
+
+red$sp_richness <- as.numeric(red$sp_richness)
+
+str(red$sp_richness)
+
+
+```
+
+Let's do some quick peeks at the data. Let's start by making a frequency table of the number of observations by grade and graph it!
+
+
+```{r}
+freq(red$"Grade")
+
+red <- subset(red, !is.na(Grade))
+red <- subset (red, !is.na(sp_richness))
+red <- subset (red, !is.na(shannon))
+
+
+```
+
+## Species Richness 
+
+Let's look at Species Richness by grade
+```{r}
+## Now we can graph it
+
+p <- ggplot(data = subset(red, !is.na(Grade)), aes(Grade, sp_richness))
+p + geom_boxplot()
+```
+
+
+And let's look at some of the stats for species richness.
+
+We're going to do an ANOVA-- we want to see if there is a difference between the grades in the species richness. Is there a significant difference in the means between the groups?
+
+The answer is yes. With a p-value of <2e-16 ***
+
+Now which ones are different?
+
+We use a Tukey's Honestly Significant Differences test for that. It tells us which groups are different? Look under the $Grade column
+
+
+```{r}
+mean(red$sp_richness, na.rm=TRUE)
+
+sppr_aov <- aov(sp_richness ~ Grade, data = red)
+summary(sppr_aov)
+
+tukey.test <- TukeyHSD(sppr_aov)
+tukey.test
+
+
+
+
+```
+## And now for Shannon's 
+First graph it and then the same stats
+
+```{r}
+p2 <- ggplot(red, aes(Grade, shannon))
+p2 + geom_boxplot()
+
+
+sppdiv_aov <- aov(shannon ~ Grade, data = red)
+summary(sppdiv_aov)
+
+
+tukey.test <- TukeyHSD(sppdiv_aov)
+tukey.test
+
+
+
+
+
+
+
+```
+
+And now save the .csv file we built. 
+
+```{r}
+write.csv(red, "red.csv", row.names=F)
+```
+
+And that's it. 
+
+For the final bit of the case study, you're going to be submitting your:
+1) richness & shannon's graphs, 
+2) your stats for both the richness & shannon's,
+3) Figure legends for both graphs
+4) Short paragraph summary what we found and why it's important.
+
+Case Study #2 is due Feb 14th on Canvas. 
 

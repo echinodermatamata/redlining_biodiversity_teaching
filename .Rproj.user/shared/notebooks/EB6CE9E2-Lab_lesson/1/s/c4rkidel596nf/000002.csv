@@ -1,0 +1,7 @@
+"0","# add all the columns needed for the analysis (that don't vary within checklist)"
+"0","sampling_event_info <- data2018 %>%"
+"0","  select(SAMPLING.EVENT.IDENTIFIER, LOCALITY, LOCALITY.ID, OBSERVATION.DATE,"
+"0","         PROTOCOL.TYPE, ALL.SPECIES.REPORTED, EFFORT.DISTANCE.KM, EFFORT.AREA.HA,"
+"0","         DURATION.MINUTES, YEAR, GROUP.IDENTIFIER, LATITUDE, LONGITUDE) %>%"
+"0","  distinct()"
+"0",""

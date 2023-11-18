@@ -1,0 +1,6 @@
+"0","# Format Date-- This line of code uses the lubridate package to properly format the"
+"0","##dates so that they are easier to use in downstream analyses"
+"0","data2018$OBSERVATION_DATE <- as.Date(data2018$OBSERVATION.DATE, format=""%Y-%m-%d"")"
+"0",""
+"0","# add year to the dataframe"
+"0","data2018$YEAR <- year(data2018$OBSERVATION.DATE)"

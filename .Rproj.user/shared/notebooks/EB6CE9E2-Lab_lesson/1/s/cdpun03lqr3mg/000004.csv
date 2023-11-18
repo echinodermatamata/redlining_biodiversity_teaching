@@ -1,0 +1,5 @@
+"0","red <- subset(red, !is.na(Grade))"
+"0","red <- subset (red, !is.na(sp_richness))"
+"0","red <- subset (red, !is.na(shannon))"
+"0",""
+"0",""

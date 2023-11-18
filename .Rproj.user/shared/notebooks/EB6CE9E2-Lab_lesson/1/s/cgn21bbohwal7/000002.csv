@@ -1,0 +1,4 @@
+"0","## Now we can graph it"
+"0",""
+"0","p <- ggplot(data = subset(red, !is.na(Grade)), aes(Grade, sp_richness))"
+"0","p + geom_boxplot()"

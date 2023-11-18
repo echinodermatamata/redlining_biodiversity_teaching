@@ -1,0 +1,8 @@
+"0","###ArcGIS part"
+"0","###Make just coordinates and LOCALITY.ID"
+"0",""
+"0","arc <-subset (analysis_data.all, select = c(""LOCALITY.ID"", ""LATITUDE"", ""LONGITUDE""))"
+"0","arc <- unique(arc)"
+"0",""
+"0","write.csv(arc, ""arc.csv"", row.names=F)"
+"0","######"

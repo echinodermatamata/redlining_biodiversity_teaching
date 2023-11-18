@@ -1,0 +1,5 @@
+"0","## now, append the selected checklists for each group_identifier"
+"0","## with the non group_identifier checklists from the data"
+"0","analysis_data <- analysis_data %>%"
+"0","  filter(!grepl(""G"", GROUP.IDENTIFIER)) %>%"
+"0","  bind_rows(., duplicated_data)"
